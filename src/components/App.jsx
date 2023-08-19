@@ -1,80 +1,131 @@
-import React, { Component } from "react";
-import { SearchBar } from "./SearchParts/SearchBar";
-import { ImageGallery } from "./SearchParts/ImageGallery";
-import { findQuery } from "./SearchParts/API";
-import { InfinitySpin } from 'react-loader-spinner';
+import { Component } from 'react';
+import axios from 'axios';
+import PropTypes from 'prop-types';
+import { ToastContainer, toast } from 'react-toastify';
+import { Zoom } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
-export class App extends Component {
+import SearhBar from './searchBar/SearchBar';
+import ImageGallery from './image-gallery/ImageGallery';
+import LoadMoreButton from './button/Button';
+import { AppContainer } from './App.styled';
+import fetchApi from '../components/service/ApiService';
+import Spiner from './loader/Loader';
+import Modal from './modal/Modal';
+
+axios.defaults.baseURL = 'https://pixabay.com/api/';
+export default class App extends Component {
+  static propTypes = { searchQuery: PropTypes.string };
   state = {
-    query: "",
+    searchQuery: '',
     images: [],
-    loading: false,
     page: 1,
+    selectedImage: null,
+    alt: null,
+    status: 'idle',
+    error: null,
   };
-  changeQuery = newQuery => {
-    this.setState({
-      query: newQuery,
-      images: [],
-      page: 1,
-    })
-  }
-  async componentDidMount() {
-    const savedImages = localStorage.getItem('savedImages');
-    if (savedImages !== null) {
-      this.setState({ images: JSON.parse(savedImages) }); 
+  totalHits = null;
+
+  async componentDidUpdate(_, prevState) {
+    const { page, searchQuery } = this.state;
+    if (prevState.searchQuery !== searchQuery || prevState.page !== page) {
+      this.setState({ status: 'pending' });
+
+      try {
+        const imageData = await fetchApi(searchQuery, page);
+        this.totalHits = imageData.total;
+        const imagesHits = imageData.hits;
+        if (!imagesHits.length) {
+          toast.warning(
+            'No results were found for your search, please try something else.',
+            { transition: Zoom, position: 'top-center' }
+          );
+        }
+        this.setState(({ images }) => ({
+          images: [...images, ...imagesHits],
+          status: 'resolved',
+        }));
+
+        if (page > 1) {
+          const CARD_HEIGHT = 300; // preview image height
+          window.scrollBy({
+            top: CARD_HEIGHT * 2,
+            behavior: 'smooth',
+          });
+        }
+      } catch (error) {
+        toast.error(`Sorry something went wrong. ${error.message}`);
+        this.setState({ status: 'rejected' });
+      }
     }
-    
-    this.setState({ loading: true }); 
-    const newQuery = this.state.query;
-    const page = this.state.page;
-
-    const response = await findQuery(newQuery, page);
-    const images = response.data.hits;
-
+  }
+  handleFormSubmit = searchQuery => {
+    if (this.state.searchQuery === searchQuery) {
+      return;
+    }
+    this.resetState();
+    this.setState({ searchQuery });
+  };
+  handleSelectedImage = (largeImageUrl, tags) => {
     this.setState({
-      images,
-      loading: false,
+      selectedImage: largeImageUrl,
+      alt: tags,
     });
-  }
+  };
 
-  async componentDidUpdate(prevProps, prevState) {
-    if (
-      prevState.query !== this.state.query ||
-      prevState.page !== this.state.page
-    ) {
-      localStorage.setItem('query-search', JSON.stringify(this.state.query));
-      localStorage.setItem('page-query', JSON.stringify(this.state.page));
-      const newQuery = this.state.query;
-      const page = this.state.page;
-      this.setState({ loading: true }); 
-      const response = await findQuery(newQuery, page);
-      const images = response.data.hits;
+  resetState = () => {
+    this.setState({
+      searchQuery: '',
+      page: 1,
+      images: [],
+      selectedImage: null,
+      alt: null,
+      status: 'idle',
+    });
+  };
 
-      this.setState({
-        images: images,
-        loading: false,
-      });
-    }
-  }
+  loadMore = () => {
+    this.setState(prevState => ({
+      page: prevState.page + 1,
+    }));
+  };
 
-  handleLoadMore = () => {
-    this.setState((prevState) => ({ page: prevState.page + 1 }));
+  closeModal = () => {
+    this.setState({
+      selectedImage: null,
+    });
   };
 
   render() {
-    const { loading } = this.state; 
+    const { images, status, selectedImage, alt, error } = this.state;
     return (
-      <div>
-        <SearchBar searchItems={this.changeQuery} />
-        {loading ? (
-          <InfinitySpin 
-          width='200'
-          color="#4fa94d"
-        />
-        ) : (
-          <ImageGallery images={this.state.images} loadMore={this.handleLoadMore} />
+      <AppContainer>
+        <SearhBar onSubmit={this.handleFormSubmit} />
+        <ToastContainer autoClose={3000} theme="colored" pauseOnHover />
+        {status === 'pending' && <Spiner />}
+        {error && (
+          <h1 style={{ color: 'orangered', textAlign: 'center' }}>
+            {error.message}
+          </h1>
         )}
-      </div>
+        {images.length > 0 && (
+          <ImageGallery
+            images={images}
+            selectedImage={this.handleSelectedImage}
+          />
+        )}
+        {images.length > 0 && images.length !== this.totalHits && (
+          <LoadMoreButton onClick={this.loadMore} />
+        )}
+        {selectedImage && (
+          <Modal
+            selectedImage={selectedImage}
+            tags={alt}
+            onClose={this.closeModal}
+          />
+        )}
+      </AppContainer>
     );
   }
 }
